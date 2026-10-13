@@ -12,12 +12,13 @@ class CheckExpiredAds extends Command
      */
     protected $signature = 'ads:check-expired
                             {--archive : Mark expired ads as "expired" status instead of just reporting}
+                            {--notify : Send email warning notifications to advertisers whose campaigns expire soon}
                             {--days=0 : Show ads expiring within this many days (0 = already expired)}';
 
     /**
      * The console command description.
      */
-    protected $description = 'Check for expired ad campaigns and optionally archive them';
+    protected $description = 'Check for expired ad campaigns and optionally archive or notify them';
 
     /**
      * Execute the console command.
@@ -27,6 +28,7 @@ class CheckExpiredAds extends Command
         $now = now();
         $daysAhead = (int) $this->option('days');
         $archive = $this->option('archive');
+        $notify = $this->option('notify');
 
         // Find currently expired ads (approved but past their expiry)
         $expiredAds = AdSubmission::where('status', 'approved')
@@ -65,21 +67,22 @@ class CheckExpiredAds extends Command
             }
         }
 
-        // Show upcoming expirations
-        if ($daysAhead > 0) {
+        // Show upcoming expirations or notify
+        $notifyDays = ($notify && $daysAhead <= 0) ? 2 : $daysAhead;
+        if ($notifyDays > 0) {
             $upcoming = AdSubmission::where('status', 'approved')
                 ->whereNotNull('expires_at')
                 ->where('expires_at', '>=', $now)
-                ->where('expires_at', '<=', $now->copy()->addDays($daysAhead))
+                ->where('expires_at', '<=', $now->copy()->addDays($notifyDays))
                 ->orderBy('expires_at')
                 ->get();
 
             $this->newLine();
 
             if ($upcoming->isEmpty()) {
-                $this->info("ℹ️  No ads expiring within the next {$daysAhead} day(s).");
+                $this->info("ℹ️  No ads expiring within the next {$notifyDays} day(s).");
             } else {
-                $this->warn("⏰ {$upcoming->count()} ad(s) expiring within {$daysAhead} day(s):");
+                $this->warn("⏰ {$upcoming->count()} ad(s) expiring within {$notifyDays} day(s):");
                 $this->newLine();
 
                 $rows = $upcoming->map(fn ($ad) => [
@@ -94,6 +97,22 @@ class CheckExpiredAds extends Command
                     ['ID', 'Business Name', 'Category', 'Expires At', 'Time Remaining'],
                     $rows
                 );
+
+                if ($notify) {
+                    $sentCount = 0;
+                    foreach ($upcoming as $ad) {
+                        if (!empty($ad->submitter_email)) {
+                            try {
+                                \Illuminate\Support\Facades\Mail::to($ad->submitter_email)
+                                    ->send(new \App\Mail\AdExpiringSoonMail($ad));
+                                $sentCount++;
+                            } catch (\Throwable $e) {
+                                $this->warn("Could not email {$ad->submitter_email}: " . $e->getMessage());
+                            }
+                        }
+                    }
+                    $this->info("✉️  Sent {$sentCount} expiration warning notification email(s).");
+                }
             }
         }
 

@@ -129,7 +129,17 @@ class ModeratorController extends Controller
             'starts_at' => $startsAt,
             'expires_at' => $expiresAt,
             'decline_reason' => null,
+            'approved_by' => auth()->id(),
         ]);
+
+        // Send approval email notification if advertiser email is provided
+        if (!empty($ad->submitter_email)) {
+            try {
+                \Illuminate\Support\Facades\Mail::to($ad->submitter_email)->send(new \App\Mail\AdApprovedMail($ad));
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning("Failed to send ad approval email: " . $e->getMessage());
+            }
+        }
 
         if (request()->wantsJson()) {
             return response()->json([
@@ -148,16 +158,56 @@ class ModeratorController extends Controller
     public function decline(Request $request, $id)
     {
         $ad = AdSubmission::findOrFail($id);
+        $reason = $request->input('decline_reason', 'Not specified');
+
         $ad->update([
             'status' => 'declined',
-            'decline_reason' => $request->input('decline_reason', 'Not specified'),
+            'decline_reason' => $reason,
+            'declined_by' => auth()->id(),
         ]);
+
+        // Send decline email notification if advertiser email is provided
+        if (!empty($ad->submitter_email)) {
+            try {
+                \Illuminate\Support\Facades\Mail::to($ad->submitter_email)->send(new \App\Mail\AdDeclinedMail($ad, $reason));
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning("Failed to send ad decline email: " . $e->getMessage());
+            }
+        }
 
         if (request()->wantsJson()) {
             return response()->json(['success' => true, 'message' => "Ad #{$id} declined."]);
         }
 
         return back()->with('success', "Ad '{$ad->business_name}' declined.");
+    }
+
+    /**
+     * Renew / extend an ad campaign duration.
+     */
+    public function renew(Request $request, $id)
+    {
+        $ad = AdSubmission::findOrFail($id);
+        $days = (int) $request->input('days', 30);
+        if ($days <= 0) $days = 30;
+
+        $baseDate = ($ad->expires_at && $ad->expires_at->isFuture()) ? $ad->expires_at : now();
+        $newExpiry = (clone $baseDate)->addDays($days);
+
+        $ad->update([
+            'status' => 'approved',
+            'expires_at' => $newExpiry,
+        ]);
+
+        if (request()->wantsJson()) {
+            return response()->json([
+                'success' => true,
+                'message' => "Campaign extended by {$days} days until {$newExpiry->format('M d, Y')}.",
+                'expires_at' => $newExpiry->toIso8601String(),
+            ]);
+        }
+
+        return back()->with('success', "Ad '{$ad->business_name}' extended by {$days} days (valid until {$newExpiry->format('M d, Y')})!");
     }
 
     /**

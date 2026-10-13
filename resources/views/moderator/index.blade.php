@@ -214,9 +214,12 @@
             <h1>AdModerator <span>(Laravel)</span></h1>
         </div>
         <div class="header-right">
+            @if(Auth::user()->isAdmin())
+                <a href="{{ route('users.index') }}" class="api-link" style="background: rgba(56, 189, 248, 0.15); border-color: rgba(56, 189, 248, 0.3);">👥 Team & Roles</a>
+            @endif
             <a href="{{ route('analytics.index') }}" class="api-link" style="background: rgba(168, 85, 247, 0.15); border-color: rgba(168, 85, 247, 0.3); color: #c084fc;">📊 Analytics & Telemetry</a>
             <div class="pulse-indicator"></div>
-            <span style="font-size: 0.85rem; color: var(--text-secondary);">👤 {{ Auth::user()->name ?? 'Moderator' }}</span>
+            <span style="font-size: 0.85rem; color: var(--text-secondary);">👤 {{ Auth::user()->name ?? 'Moderator' }} <span style="font-size: 0.7rem; text-transform: uppercase; background: rgba(255,255,255,0.1); padding: 1px 6px; border-radius: 4px; color: #38bdf8;">{{ Auth::user()->role ?? 'moderator' }}</span></span>
             <form action="{{ route('logout') }}" method="POST" style="display: inline;">
                 @csrf
                 <button type="submit" class="btn" style="background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.3); color: #fca5a5; padding: 0.35rem 0.75rem; font-size: 0.8rem;">Log Out</button>
@@ -368,83 +371,114 @@
                                                 <span class="badge badge-category">🏷️ {{ ucfirst($sub->category) }}</span>
                                             @endif
                                             @if($sub->display_duration)
-                                                <span class="badge badge-schedule">⏱️ {{ $sub->display_duration }}s</span>
-                                            @endif
+                                                 <span class="badge badge-schedule">⏱️ {{ $sub->display_duration }}s</span>
+                                             @endif
 
-                                            {{-- Payment status badge --}}
-                                            @if($sub->isPaid())
-                                                <span class="badge badge-paid">💳 Paid &#8358;{{ number_format($sub->payment_amount, 0) }}</span>
-                                            @elseif($sub->payment_status === 'pending')
-                                                <span class="badge badge-pay-pending">⏳ Payment Pending</span>
-                                            @elseif($sub->payment_status === 'failed')
-                                                <span class="badge badge-unpaid">❌ Payment Failed</span>
-                                            @else
-                                                <span class="badge badge-unpaid">🚫 Unpaid</span>
-                                            @endif
-                                        </div>
-                                        <h3 class="business-title">{{ $sub->business_name }}</h3>
-                                    </div>
-                                    <span class="card-date">{{ $sub->created_at->format('M d, H:i') }}</span>
-                                </div>
+                                             @if($sub->image_width && $sub->image_height)
+                                                 <span class="badge" style="background: rgba(148, 163, 184, 0.15); color: #cbd5e1; border: 1px solid rgba(148, 163, 184, 0.3);">📐 {{ $sub->image_width }}×{{ $sub->image_height }}</span>
+                                             @endif
 
-                                <!-- Schedule Status -->
-                                <div class="schedule-box">
-                                    @if($sub->expires_at)
-                                        @if($isExpired)
-                                            <span style="color: #f87171;">⚠️ Expired on <strong>{{ $sub->expires_at->format('M d, Y') }}</strong></span>
-                                        @else
-                                            <span>📅 Active until <strong>{{ $sub->expires_at->format('M d, Y') }}</strong> ({{ $sub->expires_at->diffForHumans() }})</span>
-                                        @endif
-                                    @else
-                                        <span>♾️ Schedule: <strong>Continuous (No expiration date)</strong></span>
-                                    @endif
-                                </div>
+                                             {{-- Payment status badge --}}
+                                             @if($sub->isPaid())
+                                                 <span class="badge badge-paid">💳 Paid &#8358;{{ number_format($sub->payment_amount, 0) }}</span>
+                                             @elseif($sub->payment_status === 'pending')
+                                                 <span class="badge badge-pay-pending">⏳ Payment Pending</span>
+                                             @elseif($sub->payment_status === 'failed')
+                                                 <span class="badge badge-unpaid">❌ Payment Failed</span>
+                                             @else
+                                                 <span class="badge badge-unpaid">🚫 Unpaid</span>
+                                             @endif
+                                         </div>
+                                         <h3 class="business-title">{{ $sub->business_name }}</h3>
+                                     </div>
+                                     <span class="card-date">{{ $sub->created_at->format('M d, H:i') }}</span>
+                                 </div>
 
-                                @if($sub->payment_reference)
-                                    <div class="url-info" style="font-size: 0.8rem; color: var(--text-secondary);">
-                                        <strong>Paystack Ref:</strong>
-                                        <a href="https://dashboard.paystack.com/#/transactions/{{ $sub->payment_reference }}" target="_blank" rel="noopener noreferrer" class="paystack-link">🔎 {{ $sub->payment_reference }}</a>
-                                        @if($sub->paid_at)
-                                            <span style="color: var(--accent-green);"> · paid {{ $sub->paid_at->diffForHumans() }}</span>
-                                        @endif
-                                    </div>
-                                @endif
+                                 <!-- Schedule Status -->
+                                 <div class="schedule-box">
+                                     @if($sub->expires_at)
+                                         @if($isExpired)
+                                             <span style="color: #f87171;">⚠️ Expired on <strong>{{ $sub->expires_at->format('M d, Y') }}</strong></span>
+                                         @else
+                                             <span>📅 Active until <strong>{{ $sub->expires_at->format('M d, Y') }}</strong> ({{ $sub->expires_at->diffForHumans() }})</span>
+                                         @endif
+                                     @else
+                                         <span>♾️ Schedule: <strong>Continuous (No expiration date)</strong></span>
+                                     @endif
+                                 </div>
 
-                                @if($sub->submitter_contact)
-                                    <div class="contact-info">
-                                        <strong>Submitter:</strong> {{ $sub->submitter_contact }}
-                                    </div>
-                                @endif
+                                 <!-- Submitter and Audit Trail -->
+                                 @if($sub->approvedBy)
+                                     <div style="font-size: 0.75rem; color: #86efac; margin-bottom: 0.35rem;">✓ Approved by <strong>{{ $sub->approvedBy->name }}</strong></div>
+                                 @elseif($sub->declinedBy)
+                                     <div style="font-size: 0.75rem; color: #fca5a5; margin-bottom: 0.35rem;">✗ Declined by <strong>{{ $sub->declinedBy->name }}</strong></div>
+                                 @endif
 
-                                @if($sub->click_through_url)
-                                    <div class="url-info">
-                                        <strong>Website / Link:</strong> <a href="{{ $sub->click_through_url }}" target="_blank" rel="noopener noreferrer">🔗 {{ $sub->click_through_url }}</a>
-                                    </div>
-                                @endif
+                                 @if($sub->payment_reference)
+                                     <div class="url-info" style="font-size: 0.8rem; color: var(--text-secondary);">
+                                         <strong>Paystack Ref:</strong>
+                                         <a href="https://dashboard.paystack.com/#/transactions/{{ $sub->payment_reference }}" target="_blank" rel="noopener noreferrer" class="paystack-link">🔎 {{ $sub->payment_reference }}</a>
+                                         @if($sub->paid_at)
+                                             <span style="color: var(--accent-green);"> · paid {{ $sub->paid_at->diffForHumans() }}</span>
+                                         @endif
+                                     </div>
+                                 @endif
 
-                                <div class="card-desc">{{ $sub->description ?: 'No description provided.' }}</div>
+                                 @if($sub->submitter_email)
+                                     <div class="contact-info">
+                                         <strong>Email:</strong> <a href="mailto:{{ $sub->submitter_email }}" style="color: var(--accent-blue); text-decoration: none;">✉️ {{ $sub->submitter_email }}</a>
+                                     </div>
+                                 @endif
 
-                                @if($sub->status === 'declined' && $sub->decline_reason)
-                                    <div class="decline-box">
-                                        <strong>Decline Reason:</strong> {{ $sub->decline_reason }}
-                                    </div>
-                                @endif
+                                 @if($sub->submitter_contact)
+                                     <div class="contact-info">
+                                         <strong>Contact:</strong> {{ $sub->submitter_contact }}
+                                     </div>
+                                 @endif
 
-                                <div class="card-actions">
-                                    <button type="button" class="btn btn-approve" onclick="openApproveModal({{ $sub->id }}, '{{ addslashes($sub->business_name) }}', '{{ $sub->expires_at ? $sub->expires_at->format('Y-m-d') : '' }}', {{ $sub->isPaid() ? 'true' : 'false' }})">
-                                        {{ ($sub->status === 'approved' && !$isExpired) ? '⚙️ Reschedule' : '✓ Approve & Schedule' }}
-                                    </button>
+                                 @if($sub->click_through_url)
+                                     <div class="url-info">
+                                         <strong>Website / Link:</strong> <a href="{{ $sub->click_through_url }}" target="_blank" rel="noopener noreferrer">🔗 {{ $sub->click_through_url }}</a>
+                                     </div>
+                                 @endif
 
-                                    @if($sub->status !== 'declined')
-                                        <button class="btn btn-decline" onclick="openDeclineModal({{ $sub->id }})">✗ Decline</button>
-                                    @endif
+                                 <div class="card-desc">{{ $sub->description ?: 'No description provided.' }}</div>
 
-                                    <form action="{{ route('moderator.destroy', $sub->id) }}" method="POST" onsubmit="return confirm('Delete submission for {{ $sub->business_name }}?');">
-                                        @csrf
-                                        @method('DELETE')
-                                        <button type="submit" class="btn btn-delete" title="Delete record">🗑️</button>
-                                    </form>
-                                </div>
+                                 @if($sub->status === 'declined' && $sub->decline_reason)
+                                     <div class="decline-box">
+                                         <strong>Decline Reason:</strong> {{ $sub->decline_reason }}
+                                     </div>
+                                 @endif
+
+                                 <div class="card-actions" style="margin-top: auto; padding-top: 1rem; border-top: 1px solid rgba(255, 255, 255, 0.05); display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center;">
+                                     <a href="{{ route('advertiser.status', ['reference' => $sub->payment_reference ?: $sub->id]) }}" target="_blank" class="btn" style="background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.3); color: #38bdf8; font-size: 0.8rem; text-decoration: none; padding: 0.4rem 0.6rem; border-radius: 6px;">🔗 Portal</a>
+
+                                     @if(Auth::user()->canModerate())
+                                         <button type="button" class="btn btn-approve" onclick="openApproveModal({{ $sub->id }}, '{{ addslashes($sub->business_name) }}', '{{ $sub->expires_at ? $sub->expires_at->format('Y-m-d') : '' }}', {{ $sub->isPaid() ? 'true' : 'false' }})">
+                                             {{ ($sub->status === 'approved' && !$isExpired) ? '⚙️ Reschedule' : '✓ Approve & Schedule' }}
+                                         </button>
+
+                                         @if($sub->status === 'approved')
+                                             <form action="{{ route('moderator.renew', $sub->id) }}" method="POST" style="display: inline;">
+                                                 @csrf
+                                                 <input type="hidden" name="days" value="30">
+                                                 <button type="submit" class="btn" style="background: rgba(34, 197, 94, 0.15); border: 1px solid rgba(34, 197, 94, 0.3); color: #86efac; font-size: 0.8rem; padding: 0.4rem 0.6rem; border-radius: 6px;" title="Extend campaign by 30 days">⚡ +30d Renew</button>
+                                             </form>
+                                         @endif
+
+                                         @if($sub->status !== 'declined')
+                                             <button class="btn btn-decline" onclick="openDeclineModal({{ $sub->id }})">✗ Decline</button>
+                                         @endif
+
+                                         <form action="{{ route('moderator.destroy', $sub->id) }}" method="POST" onsubmit="return confirm('Delete submission for {{ $sub->business_name }}?');" style="display: inline; margin-left: auto;">
+                                             @csrf
+                                             @method('DELETE')
+                                             <button type="submit" class="btn btn-delete" title="Delete record">🗑️</button>
+                                         </form>
+                                     @else
+                                         <span style="font-size: 0.75rem; color: var(--text-secondary); margin-left: auto;">(Read-Only Viewer)</span>
+                                     @endif
+                                 </div>
                             </div>
                         </div>
                     @endforeach

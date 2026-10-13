@@ -24,6 +24,7 @@ class AdApiController extends Controller
             'business_name' => 'required|string|max:255',
             'description' => 'nullable|string|max:1000',
             'submitter_contact' => 'nullable|string|max:255',
+            'submitter_email' => 'nullable|email|max:255',
             'category' => 'nullable|string|max:100',
             'media_type' => 'nullable|in:image,video,animated',
             'click_through_url' => 'nullable|url|max:500',
@@ -50,8 +51,16 @@ class AdApiController extends Controller
 
         // Store image on the public disk inside 'ads' folder
         $imagePath = null;
+        $imageWidth = null;
+        $imageHeight = null;
         if ($request->hasFile('image')) {
-            $imagePath = $request->file('image')->store('ads', 'public');
+            $file = $request->file('image');
+            $imagePath = $file->store('ads', 'public');
+            $dim = @getimagesize($file->getRealPath());
+            if ($dim) {
+                $imageWidth = (int) $dim[0];
+                $imageHeight = (int) $dim[1];
+            }
         }
 
         // Store video if present
@@ -72,9 +81,12 @@ class AdApiController extends Controller
             'business_name' => $request->business_name,
             'description' => $request->description,
             'submitter_contact' => $request->submitter_contact,
+            'submitter_email' => $request->input('submitter_email'),
             'category' => $request->input('category', 'general'),
             'media_type' => $mediaType,
             'image_path' => $imagePath,
+            'image_width' => $imageWidth,
+            'image_height' => $imageHeight,
             'video_path' => $videoPath,
             'click_through_url' => $request->click_through_url,
             'display_duration' => $request->input('display_duration', 5.0),

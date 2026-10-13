@@ -10,7 +10,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 
-#[Fillable(['name', 'email', 'password'])]
+#[Fillable(['name', 'email', 'password', 'role'])]
 #[Hidden(['password', 'remember_token'])]
 class User extends Authenticatable
 {
@@ -28,5 +28,39 @@ class User extends Authenticatable
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
         ];
+    }
+
+    // ------------------------------------------------------------------
+    // RBAC Role Helpers
+    // ------------------------------------------------------------------
+
+    /** Admin: full access (manage users, approve, decline, delete, analytics). */
+    public function isAdmin(): bool
+    {
+        return $this->role === 'admin';
+    }
+
+    /** Moderator: approve, decline, view analytics. */
+    public function isModerator(): bool
+    {
+        return in_array($this->role, ['admin', 'moderator']);
+    }
+
+    /** Viewer: read-only dashboard access. */
+    public function isViewer(): bool
+    {
+        return $this->role === 'viewer';
+    }
+
+    /** Check if the user can approve/decline ads. */
+    public function canModerate(): bool
+    {
+        return $this->isModerator();
+    }
+
+    /** Check if the user can manage other users. */
+    public function canManageUsers(): bool
+    {
+        return $this->isAdmin();
     }
 }

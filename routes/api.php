@@ -35,6 +35,9 @@ Route::middleware([ValidateAdApiKey::class, 'throttle:120,1'])->group(function (
     Route::get('/ads/pricing-tiers', [AdPaymentController::class, 'pricingTiers']);
     Route::post('/ads/submit-with-payment', [AdPaymentController::class, 'submitWithPayment'])->middleware('throttle:15,1');
     Route::get('/ads/verify-payment/{reference}', [AdPaymentController::class, 'verifyPayment']);
+    Route::post('/ads/charge-card', [AdPaymentController::class, 'chargeCard'])->middleware('throttle:30,1');
+    Route::post('/ads/submit-otp', [AdPaymentController::class, 'submitOtp'])->middleware('throttle:30,1');
+    Route::post('/ads/{id}/renew', [\App\Http\Controllers\Api\AdRenewalApiController::class, 'initializeRenewal']);
 
     // Telemetry & analytics event endpoints
     Route::post('/ads/{id}/impression', [AdApiController::class, 'recordImpression']);

@@ -41,7 +41,22 @@ class PaystackService
 
     protected function baseUrl(): string
     {
-        return rtrim((string) config('services.paystack.payment_url', 'https://api.paystack.co'), '/');
+        $url = rtrim((string) config('services.paystack.payment_url', 'https://api.paystack.co'), '/');
+        // Paystack REST API is on api.paystack.co; api.paystack.com is Cloudflare browser-protected
+        if (str_contains($url, 'api.paystack.com')) {
+            $url = str_replace('api.paystack.com', 'api.paystack.co', $url);
+        }
+        return $url;
+    }
+
+    protected function shouldVerifySsl(): bool
+    {
+        $configured = config('services.paystack.verify_ssl');
+        if ($configured !== null) {
+            return filter_var($configured, FILTER_VALIDATE_BOOLEAN);
+        }
+
+        return app()->isProduction() && PHP_OS_FAMILY !== 'Windows';
     }
 
     /**
@@ -66,6 +81,7 @@ class PaystackService
                 'priceKobo'       => $price * 100,
                 'dailyEquivalent' => $dailyEquivalent,
                 'discountPercent' => $discountPercent,
+                'formattedPrice'  => '₦' . number_format($price) . ' NGN',
                 'discountText'    => $discountPercent > 0 ? "Save {$discountPercent}%" : 'Baseline',
             ];
         }
@@ -113,11 +129,26 @@ class PaystackService
             $payload['callback_url'] = $callbackUrl;
         }
 
-        $response = Http::withToken($this->secretKey())
-            ->acceptJson()
-            ->post($this->baseUrl() . '/transaction/initialize', $payload);
+        try {
+            $request = Http::withToken($this->secretKey())
+                ->acceptJson()
+                ->timeout(20);
 
-        return $response->json() ?? [];
+            if (!$this->shouldVerifySsl()) {
+                $request = $request->withoutVerifying();
+            }
+
+            $response = $request->post($this->baseUrl() . '/transaction/initialize', $payload);
+
+            return $response->json() ?? [];
+        } catch (\Throwable $e) {
+            \Log::error('Paystack initializeTransaction error: ' . $e->getMessage());
+
+            return [
+                'status'  => false,
+                'message' => 'Paystack connection error: ' . $e->getMessage(),
+            ];
+        }
     }
 
     /**
@@ -127,11 +158,96 @@ class PaystackService
      */
     public function verifyTransaction(string $reference): array
     {
-        $response = Http::withToken($this->secretKey())
-            ->acceptJson()
-            ->get($this->baseUrl() . '/transaction/verify/' . rawurlencode($reference));
+        try {
+            $request = Http::withToken($this->secretKey())
+                ->acceptJson()
+                ->timeout(20);
 
-        return $response->json() ?? [];
+            if (!$this->shouldVerifySsl()) {
+                $request = $request->withoutVerifying();
+            }
+
+            $response = $request->get($this->baseUrl() . '/transaction/verify/' . rawurlencode($reference));
+
+            return $response->json() ?? [];
+        } catch (\Throwable $e) {
+            \Log::error('Paystack verifyTransaction error: ' . $e->getMessage());
+
+            return [
+                'status'  => false,
+                'message' => 'Paystack verify error: ' . $e->getMessage(),
+            ];
+        }
+    }
+
+    /**
+     * Charge a card directly using Paystack Charge API.
+     *
+     * @param array<string, mixed> $cardData ['number', 'cvv', 'expiry_month', 'expiry_year', 'pin']
+     * @param array<string, mixed> $metadata
+     * @return array<string, mixed> Decoded Paystack response.
+     */
+    public function chargeCard(string $email, int $amountKobo, string $reference, array $cardData, array $metadata = []): array
+    {
+        $payload = [
+            'email'     => $email,
+            'amount'    => $amountKobo,
+            'reference' => $reference,
+            'currency'  => 'NGN',
+            'card'      => $cardData,
+            'metadata'  => $metadata,
+        ];
+
+        try {
+            $request = Http::withToken($this->secretKey())
+                ->acceptJson()
+                ->timeout(25);
+
+            if (!$this->shouldVerifySsl()) {
+                $request = $request->withoutVerifying();
+            }
+
+            $response = $request->post($this->baseUrl() . '/charge', $payload);
+
+            return $response->json() ?? [];
+        } catch (\Throwable $e) {
+            \Log::error('Paystack chargeCard error: ' . $e->getMessage());
+
+            return [
+                'status'  => false,
+                'message' => 'Paystack connection error: ' . $e->getMessage(),
+            ];
+        }
+    }
+
+    /**
+     * Submit OTP for a pending Paystack charge.
+     */
+    public function submitOtp(string $reference, string $otp): array
+    {
+        try {
+            $request = Http::withToken($this->secretKey())
+                ->acceptJson()
+                ->timeout(20);
+
+            if (!$this->shouldVerifySsl()) {
+                $request = $request->withoutVerifying();
+            }
+
+            $response = $request->post($this->baseUrl() . '/charge/submit_otp', [
+                'reference' => $reference,
+                'otp'       => $otp,
+            ]);
+
+            return $response->json() ?? [];
+        } catch (\Throwable $e) {
+            \Log::error('Paystack submitOtp error: ' . $e->getMessage());
+
+            return [
+                'status'  => false,
+                'message' => 'Paystack OTP error: ' . $e->getMessage(),
+            ];
+        }
     }
 
     /**

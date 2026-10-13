@@ -14,9 +14,12 @@ class AdSubmission extends Model
         'business_name',
         'description',
         'submitter_contact',
+        'submitter_email',
         'category',
         'media_type',
         'image_path',
+        'image_width',
+        'image_height',
         'video_path',
         'click_through_url',
         'display_duration',
@@ -24,6 +27,8 @@ class AdSubmission extends Model
         'expires_at',
         'status',
         'decline_reason',
+        'approved_by',
+        'declined_by',
         'payment_status',
         'payment_reference',
         'payment_amount',
@@ -40,7 +45,27 @@ class AdSubmission extends Model
         'display_duration' => 'float',
         'payment_amount' => 'decimal:2',
         'duration_days' => 'integer',
+        'image_width' => 'integer',
+        'image_height' => 'integer',
+        'approved_by' => 'integer',
+        'declined_by' => 'integer',
     ];
+
+    /**
+     * User who approved this ad.
+     */
+    public function approvedBy()
+    {
+        return $this->belongsTo(User::class, 'approved_by');
+    }
+
+    /**
+     * User who declined this ad.
+     */
+    public function declinedBy()
+    {
+        return $this->belongsTo(User::class, 'declined_by');
+    }
 
     /**
      * Relationship to tracked analytics events.
