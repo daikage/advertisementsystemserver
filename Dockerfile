@@ -21,7 +21,7 @@ RUN npm run build
 # ==========================================
 # Stage 2: Production PHP Application Server
 # ==========================================
-FROM php:8.3-fpm-alpine
+FROM php:8.4-fpm-alpine
 
 # Install system dependencies and build libraries
 RUN apk add --no-cache \
@@ -74,7 +74,7 @@ WORKDIR /var/www/html
 COPY composer.json composer.lock* ./
 
 # Install production dependencies without running scripts or autoloader yet
-RUN composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader --no-scripts
+RUN composer install --no-dev --no-interaction --prefer-dist --no-autoloader --no-scripts
 
 # Copy full application source code
 COPY . .
