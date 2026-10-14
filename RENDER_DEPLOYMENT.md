@@ -93,10 +93,22 @@ Click **Create Web Service**. Render will pull the repository, run the multi-sta
 ## Database & Media Storage Considerations on Render
 
 ### 1. Database
-- **SQLite (Free tier)**: Runs inside the container at `/var/www/html/database/database.sqlite`. On the free tier, files are ephemeral and reset on redeploy.
-- **Render PostgreSQL (Recommended for production)**:
-  1. In Render, create a **New +** -> **PostgreSQL**.
-  2. Set `DB_CONNECTION=pgsql`, `DB_HOST`, `DB_PORT=5432`, `DB_DATABASE`, `DB_USERNAME`, and `DB_PASSWORD` in your Web Service environment.
+- **Supabase PostgreSQL (Recommended)**:
+  Supabase provides a generous free PostgreSQL database with backups and a web dashboard.
+  In your Render Web Service **Environment Variables**, set:
+  - `DB_CONNECTION`: `pgsql`
+  - `DB_HOST`: `aws-0-[region].pooler.supabase.com` *(From Supabase: Settings -> Database -> Connection string -> Session mode Pooler)*
+  - `DB_PORT`: `5432` *(or `6543` for transaction mode pooler)*
+  - `DB_DATABASE`: `postgres`
+  - `DB_USERNAME`: `postgres.[YOUR-PROJECT-REF]`
+  - `DB_PASSWORD`: `[YOUR-SUPABASE-PASSWORD]`
+  - `DB_SSLMODE`: `require`
+  - `RUN_MIGRATIONS`: `true`
+  
+  *(Alternatively, you can just set `DB_CONNECTION=pgsql` and set `DATABASE_URL` or `DB_URL` to your full Supabase URI connection string).*
+
+- **SQLite (Quick testing)**: Runs inside the container at `/var/www/html/database/database.sqlite`. On the Render free tier, files are ephemeral and reset on redeploy.
+- **Render PostgreSQL**: Create a PostgreSQL instance in Render and set `DB_CONNECTION=pgsql` with the database host and credentials.
 
 ### 2. Uploaded Ad Images and Videos
 - On Render free tier, files stored in `storage/app/public` are ephemeral.
