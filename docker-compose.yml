@@ -1,0 +1,26 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:80"
+    environment:
+      - APP_NAME=AdvertisementSystem
+      - APP_ENV=local
+      - APP_KEY=base64:7Kq0q3QfTjGZJb4oE1Z8FzU6H7y0xO4M2W8v9Y1p3qA=
+      - APP_DEBUG=true
+      - APP_URL=http://localhost:8080
+      - LOG_CHANNEL=stderr
+      - RUN_MIGRATIONS=true
+      - DB_CONNECTION=sqlite
+      - DB_DATABASE=/var/www/html/database/database.sqlite
+      - AD_SYSTEM_API_KEY=unity_game_ad_secret_key_2026
+      - MODERATOR_DEFAULT_PASSWORD=admin123
+    volumes:
+      - ad_storage:/var/www/html/storage/app/public
+      - ad_database:/var/www/html/database
+
+volumes:
+  ad_storage:
+  ad_database:

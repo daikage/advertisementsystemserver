@@ -1,0 +1,90 @@
+services:
+  - type: web
+    name: ad-system-server
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /up
+    autoDeploy: true
+    envVars:
+      - key: APP_NAME
+        value: AdvertisementSystem
+      - key: APP_ENV
+        value: production
+      - key: APP_DEBUG
+        value: "false"
+      - key: APP_KEY
+        generateValue: true
+      - key: LOG_CHANNEL
+        value: stderr
+      - key: LOG_LEVEL
+        value: info
+      - key: RUN_MIGRATIONS
+        value: "true"
+
+      # Default database is SQLite.
+      # Note: Free tier Render instances have ephemeral storage.
+      # To persist SQLite across restarts on Render paid tiers, attach a Render Disk at /var/www/html/database
+      # Or uncomment the PostgreSQL database configuration below for a fully managed database.
+      - key: DB_CONNECTION
+        value: sqlite
+      - key: DB_DATABASE
+        value: /var/www/html/database/database.sqlite
+
+      - key: SESSION_DRIVER
+        value: database
+      - key: CACHE_STORE
+        value: database
+      - key: QUEUE_CONNECTION
+        value: database
+
+      # API Key for Unity client game billboard communication
+      - key: AD_SYSTEM_API_KEY
+        generateValue: true
+
+      # Moderator Dashboard credentials (default created on first migration)
+      - key: MODERATOR_DEFAULT_PASSWORD
+        generateValue: true
+
+      # Paystack Payment Gateway (configure these secret values in Render Dashboard)
+      - key: PAYSTACK_PUBLIC_KEY
+        sync: false
+      - key: PAYSTACK_SECRET_KEY
+        sync: false
+      - key: PAYSTACK_PAYMENT_URL
+        value: https://api.paystack.co
+      - key: PAYSTACK_MERCHANT_EMAIL
+        sync: false
+
+# ---------------------------------------------------------------------------
+# OPTIONAL: If you want to use a Managed Render PostgreSQL Database instead:
+# 1. Uncomment the database block below
+# 2. In the web service envVars above, replace DB_CONNECTION & DB_DATABASE with:
+#      - key: DB_CONNECTION
+#        value: pgsql
+#      - key: DB_HOST
+#        fromDatabase:
+#          name: adsystem-db
+#          property: host
+#      - key: DB_PORT
+#        fromDatabase:
+#          name: adsystem-db
+#          property: port
+#      - key: DB_DATABASE
+#        fromDatabase:
+#          name: adsystem-db
+#          property: database
+#      - key: DB_USERNAME
+#        fromDatabase:
+#          name: adsystem-db
+#          property: user
+#      - key: DB_PASSWORD
+#        fromDatabase:
+#          name: adsystem-db
+#          property: password
+# ---------------------------------------------------------------------------
+# databases:
+#   - name: adsystem-db
+#     databaseName: adsystem
+#     user: aduser
+#     plan: free
