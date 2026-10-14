@@ -13,8 +13,13 @@ services:
       - APP_URL=http://localhost:8080
       - LOG_CHANNEL=stderr
       - RUN_MIGRATIONS=true
-      - DB_CONNECTION=sqlite
-      - DB_DATABASE=/var/www/html/database/database.sqlite
+      - DB_CONNECTION=pgsql
+      - DB_HOST=db.bjsrwcmqsowvzinnpihs.supabase.co
+      - DB_PORT=5432
+      - DB_DATABASE=postgres
+      - DB_USERNAME=postgres
+      - DB_PASSWORD=Dotonbori11
+      - DB_SSLMODE=require
       - AD_SYSTEM_API_KEY=unity_game_ad_secret_key_2026
       - MODERATOR_DEFAULT_PASSWORD=admin123
     volumes:
