@@ -56,7 +56,7 @@ class PaystackService
             return filter_var($configured, FILTER_VALIDATE_BOOLEAN);
         }
 
-        return app()->isProduction() && PHP_OS_FAMILY !== 'Windows';
+        return true;
     }
 
     /**

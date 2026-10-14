@@ -131,6 +131,10 @@ class AdApiController extends Controller
                 'clickThroughUrl' => $ad->click_through_url ?? '',
                 'startsAt' => $ad->starts_at ? $ad->starts_at->toIso8601String() : null,
                 'expiresAt' => $ad->expires_at ? $ad->expires_at->toIso8601String() : null,
+                'contactNumber' => $ad->submitter_contact ?? '',
+                'submitterContact' => $ad->submitter_contact ?? '',
+                'email' => $ad->submitter_email ?? '',
+                'submitterEmail' => $ad->submitter_email ?? '',
             ];
 
             // Include video URL if the ad is a video type

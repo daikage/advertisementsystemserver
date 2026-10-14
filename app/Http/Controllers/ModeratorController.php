@@ -37,9 +37,13 @@ class ModeratorController extends Controller
             'paid' => AdSubmission::where('payment_status', 'paid')->count(),
         ];
 
-        // Financial metrics derived from confirmed payments.
+        // Financial metrics derived from confirmed payments and transactions ledger.
+        $txRevenue = (float) \App\Models\AdTransaction::where('status', 'paid')->sum('amount');
+        $subRevenue = (float) AdSubmission::where('payment_status', 'paid')->sum('payment_amount');
+        $totalRevenue = $txRevenue > 0 ? $txRevenue : $subRevenue;
+
         $financials = [
-            'total_revenue' => (float) AdSubmission::where('payment_status', 'paid')->sum('payment_amount'),
+            'total_revenue' => $totalRevenue,
             'active_paid_campaigns' => AdSubmission::where('payment_status', 'paid')
                 ->where('status', 'approved')
                 ->where(function ($q) use ($now) {
@@ -119,9 +123,13 @@ class ModeratorController extends Controller
             $expiresAt = (clone $startsAt)->addDays((int)$durationDays);
         } elseif ($durationDays === 'unlimited') {
             $expiresAt = null;
-        } elseif ($ad->expires_at) {
-            // Retain existing schedule if not specified
+        } elseif ((int) $ad->duration_days > 0) {
+            // Apply full purchased duration starting from the approval timestamp
+            $expiresAt = (clone $startsAt)->addDays((int) $ad->duration_days);
+        } elseif ($ad->expires_at && $ad->expires_at->isFuture()) {
             $expiresAt = $ad->expires_at;
+        } else {
+            $expiresAt = (clone $startsAt)->addDays(7);
         }
 
         $ad->update([
@@ -160,8 +168,14 @@ class ModeratorController extends Controller
         $ad = AdSubmission::findOrFail($id);
         $reason = $request->input('decline_reason', 'Not specified');
 
+        $paymentStatus = $ad->payment_status;
+        if ($ad->isPaid()) {
+            $paymentStatus = 'refund_pending';
+        }
+
         $ad->update([
             'status' => 'declined',
+            'payment_status' => $paymentStatus,
             'decline_reason' => $reason,
             'declined_by' => auth()->id(),
         ]);

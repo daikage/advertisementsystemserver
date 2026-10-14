@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\AdSubmission;
+use App\Models\AdTransaction;
 use App\Services\PaystackService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
@@ -34,23 +35,43 @@ class AdRenewalApiController extends Controller
             return response()->json(['success' => false, 'error' => 'Email is required for renewal receipt.'], 422);
         }
 
-        $renewalRef = 'ADREN' . $ad->id . Str::upper(Str::random(6));
+        $renewalRef = 'ADREN' . $ad->id . Str::upper(Str::random(10));
         $callbackUrl = route('advertiser.renewal_callback', ['reference' => $renewalRef, 'ad_id' => $ad->id]);
+
+        // Track renewal transaction
+        $transaction = AdTransaction::create([
+            'ad_submission_id' => $ad->id,
+            'reference'        => $renewalRef,
+            'type'             => 'renewal',
+            'amount'           => $tier['priceNaira'],
+            'currency'         => 'NGN',
+            'duration_days'    => $tier['durationDays'],
+            'status'           => 'pending',
+            'channel'          => 'api_renewal',
+            'metadata'         => [
+                'business_name' => $ad->business_name,
+                'tier_label'    => $tier['tierLabel'],
+                'email'         => $email,
+            ],
+        ]);
 
         $result = $paystack->initializeTransaction(
             $email,
             (int) $tier['priceKobo'],
             $renewalRef,
             [
-                'submission_id' => $ad->id,
-                'business_name' => $ad->business_name,
-                'duration_days' => $tier['durationDays'],
-                'is_renewal'    => true,
+                'submission_id'  => $ad->id,
+                'transaction_id' => $transaction->id,
+                'business_name'  => $ad->business_name,
+                'duration_days'  => $tier['durationDays'],
+                'is_renewal'     => true,
             ],
             $callbackUrl
         );
 
         if (!($result['status'] ?? false)) {
+            $transaction->update(['status' => 'failed']);
+
             return response()->json([
                 'success' => false,
                 'error'   => $result['message'] ?? 'Failed to initialize Paystack renewal.',
@@ -58,6 +79,8 @@ class AdRenewalApiController extends Controller
         }
 
         $data = $result['data'] ?? [];
+        $accessCode = $data['access_code'] ?? null;
+        $transaction->update(['paystack_access_code' => $accessCode]);
 
         return response()->json([
             'success'      => true,
@@ -66,7 +89,7 @@ class AdRenewalApiController extends Controller
             'amountNaira'  => $tier['priceNaira'],
             'durationDays' => $tier['durationDays'],
             'paymentUrl'   => $data['authorization_url'] ?? '',
-            'accessCode'   => $data['access_code'] ?? '',
+            'accessCode'   => $accessCode ?? '',
         ]);
     }
 }

@@ -4,8 +4,11 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\AdSubmission;
+use App\Models\AdTransaction;
 use App\Services\PaystackService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 
@@ -13,8 +16,8 @@ use Illuminate\Support\Str;
  * Handles the paid advertisement submission flow backed by Paystack.
  *
  * Flow: initialize a transaction -> player pays on Paystack's hosted checkout
- * -> payment confirmed via webhook (authoritative) or client polling (verify).
- * The ad then awaits moderator approval like any other submission.
+ * or in-game direct card modal -> payment confirmed via webhook (authoritative)
+ * or client polling (verify). The ad then awaits moderator approval.
  */
 class AdPaymentController extends Controller
 {
@@ -86,7 +89,7 @@ class AdPaymentController extends Controller
 
         $videoPath = $request->hasFile('video') ? $request->file('video')->store('ads/videos', 'public') : null;
 
-        // Create the submission first so we can derive a unique reference from its id.
+        // Create the submission record with pending status
         $submission = AdSubmission::create([
             'business_name'     => $request->business_name,
             'description'       => $request->description,
@@ -107,7 +110,23 @@ class AdPaymentController extends Controller
             'payment_currency'  => 'NGN',
         ]);
 
-        $reference = 'ADSUB' . $submission->id . Str::upper(Str::random(6));
+        $reference = 'ADSUB' . $submission->id . Str::upper(Str::random(10));
+
+        // Create transaction audit record
+        $transaction = AdTransaction::create([
+            'ad_submission_id' => $submission->id,
+            'reference'        => $reference,
+            'type'             => 'initial',
+            'amount'           => $tier['priceNaira'],
+            'currency'         => 'NGN',
+            'duration_days'    => $tier['durationDays'],
+            'status'           => 'pending',
+            'channel'          => 'hosted',
+            'metadata'         => [
+                'business_name' => $submission->business_name,
+                'tier_label'    => $tier['tierLabel'],
+            ],
+        ]);
 
         $callbackUrl = rtrim((string) config('app.url'), '/') . '/advertiser/status/' . $reference;
 
@@ -116,16 +135,18 @@ class AdPaymentController extends Controller
             (int) $tier['priceKobo'],
             $reference,
             [
-                'submission_id' => $submission->id,
-                'business_name' => $submission->business_name,
-                'duration_days' => $tier['durationDays'],
-                'tier_label'    => $tier['tierLabel'],
-                'price_naira'   => $tier['priceNaira'],
+                'submission_id'  => $submission->id,
+                'transaction_id' => $transaction->id,
+                'business_name'  => $submission->business_name,
+                'duration_days'  => $tier['durationDays'],
+                'tier_label'     => $tier['tierLabel'],
+                'price_naira'    => $tier['priceNaira'],
             ],
             $callbackUrl
         );
 
         if (!($result['status'] ?? false)) {
+            $transaction->update(['status' => 'failed']);
             $submission->update(['payment_status' => 'failed']);
 
             return response()->json([
@@ -135,9 +156,12 @@ class AdPaymentController extends Controller
         }
 
         $data = $result['data'] ?? [];
+        $accessCode = $data['access_code'] ?? null;
+
+        $transaction->update(['paystack_access_code' => $accessCode]);
         $submission->update([
             'payment_reference'    => $reference,
-            'paystack_access_code' => $data['access_code'] ?? null,
+            'paystack_access_code' => $accessCode,
         ]);
 
         return response()->json([
@@ -148,7 +172,7 @@ class AdPaymentController extends Controller
             'amountKobo'   => $tier['priceKobo'],
             'durationDays' => $tier['durationDays'],
             'paymentUrl'   => $data['authorization_url'] ?? '',
-            'accessCode'   => $data['access_code'] ?? '',
+            'accessCode'   => $accessCode ?? '',
         ], 201);
     }
 
@@ -157,7 +181,9 @@ class AdPaymentController extends Controller
      */
     public function verifyPayment(string $reference, PaystackService $paystack)
     {
-        $submission = AdSubmission::where('payment_reference', $reference)->first();
+        $transaction = AdTransaction::where('reference', $reference)->first();
+        $submission = $transaction ? $transaction->submission : $this->findSubmissionByReference($reference);
+
         if (!$submission) {
             return response()->json(['success' => false, 'paid' => false, 'error' => 'Submission not found for reference.'], 404);
         }
@@ -169,14 +195,20 @@ class AdPaymentController extends Controller
 
         $result   = $paystack->verifyTransaction($reference);
         $data     = $result['data'] ?? null;
-        $expected = PaystackService::priceKoboForDays((int) $submission->duration_days);
+        $expected = PaystackService::priceKoboForDays((int) ($transaction ? $transaction->duration_days : $submission->duration_days));
 
         $isSuccess = ($result['status'] ?? false)
             && ($data['status'] ?? '') === 'success'
+            && strtoupper((string) ($data['currency'] ?? '')) === 'NGN'
             && (int) ($data['amount'] ?? 0) === (int) $expected;
 
         if ($isSuccess) {
-            $submission->markAsPaid();
+            DB::transaction(function () use ($transaction, $submission) {
+                if ($transaction) {
+                    $transaction->markAsPaid();
+                }
+                $submission->markAsPaid($transaction);
+            });
 
             return response()->json($this->paymentState($submission->fresh()));
         }
@@ -210,11 +242,8 @@ class AdPaymentController extends Controller
         }
 
         $reference = $request->input('reference');
-        $submissionQuery = AdSubmission::where('payment_reference', $reference);
-        if (is_numeric($reference)) {
-            $submissionQuery->orWhere('id', (int) $reference);
-        }
-        $submission = $submissionQuery->first();
+        $transaction = AdTransaction::where('reference', $reference)->first();
+        $submission = $transaction ? $transaction->submission : $this->findSubmissionByReference($reference);
 
         if (!$submission) {
             return response()->json(['success' => false, 'error' => 'Submission not found for reference.'], 404);
@@ -233,19 +262,34 @@ class AdPaymentController extends Controller
         $cvv = (string) $request->input('cvv');
         $pin = $request->input('pin');
 
-        // Check if Paystack Test Card (Instant simulation/sandbox for testing without live charges)
+        // Sandbox / mock mode check: Strictly allowed ONLY in local development with mock keys
         $isTestCard = in_array($cardNumber, ['4084084084084084', '5060666666666666', '4000000000000001']);
         $secretKey  = (string) config('services.paystack.secret_key', '');
-        $isMockMode = empty($secretKey) || str_starts_with($secretKey, 'sk_test_placeholder') || str_contains($secretKey, 'example');
+        $isMockKey  = empty($secretKey) || str_starts_with($secretKey, 'sk_test_placeholder') || str_contains($secretKey, 'example');
+        $allowSimulation = app()->isLocal() && $isMockKey;
 
-        if ($isTestCard && $isMockMode) {
-            $submission->markAsPaid();
+        if ($isTestCard && $allowSimulation) {
+            $chargeReference = 'ADCHG' . $submission->id . Str::upper(Str::random(10));
+            $simulatedTx = AdTransaction::create([
+                'ad_submission_id' => $submission->id,
+                'reference'        => $chargeReference,
+                'type'             => 'charge',
+                'amount'           => $submission->payment_amount,
+                'currency'         => 'NGN',
+                'duration_days'    => (int) $submission->duration_days,
+                'status'           => 'paid',
+                'channel'          => 'direct_card_simulation',
+                'paid_at'          => now(),
+            ]);
+
+            $submission->markAsPaid($simulatedTx);
+
             return response()->json([
                 'success'       => true,
                 'paid'          => true,
-                'status'        => 'approved',
+                'status'        => 'pending',
                 'paymentStatus' => 'paid',
-                'reference'     => $submission->payment_reference,
+                'reference'     => $chargeReference,
                 'message'       => 'Test Card Charged Successfully! Ad submitted for review.',
             ]);
         }
@@ -261,22 +305,40 @@ class AdPaymentController extends Controller
             $cardData['pin'] = $pin;
         }
 
+        // Generate a unique reference for the /charge attempt and track it in ad_transactions
+        $chargeReference = 'ADCHG' . $submission->id . Str::upper(Str::random(10));
+        $chargeTx = AdTransaction::create([
+            'ad_submission_id' => $submission->id,
+            'reference'        => $chargeReference,
+            'type'             => 'charge',
+            'amount'           => $submission->payment_amount,
+            'currency'         => 'NGN',
+            'duration_days'    => (int) $submission->duration_days,
+            'status'           => 'pending',
+            'channel'          => 'direct_card',
+        ]);
+
         $result = $paystack->chargeCard(
             $submission->submitter_email ?? 'player@game.local',
             $amountKobo,
-            $submission->payment_reference,
+            $chargeReference,
             $cardData,
             [
-                'submission_id' => $submission->id,
-                'business_name' => $submission->business_name,
-                'channel'       => 'in_game_unity',
+                'submission_id'  => $submission->id,
+                'transaction_id' => $chargeTx->id,
+                'business_name'  => $submission->business_name,
+                'channel'        => 'in_game_unity',
             ]
         );
 
         $status = $result['data']['status'] ?? '';
 
         if (($result['status'] ?? false) && $status === 'success') {
-            $submission->markAsPaid();
+            DB::transaction(function () use ($chargeTx, $submission) {
+                $chargeTx->markAsPaid();
+                $submission->markAsPaid($chargeTx);
+            });
+
             return response()->json($this->paymentState($submission->fresh()));
         }
 
@@ -285,6 +347,7 @@ class AdPaymentController extends Controller
                 'success'     => true,
                 'paid'        => false,
                 'requiresOtp' => true,
+                'reference'   => $chargeReference,
                 'message'     => $result['data']['message'] ?? 'Please enter the OTP sent to your phone/email.',
             ]);
         }
@@ -295,22 +358,13 @@ class AdPaymentController extends Controller
                 'paid'        => false,
                 'requires3DS' => true,
                 'authUrl'     => $result['data']['url'] ?? '',
+                'reference'   => $chargeReference,
                 'message'     => '3D-Secure authentication required.',
             ]);
         }
 
-        // If in test mode with test card, allow fallback to success
-        if ($isTestCard) {
-            $submission->markAsPaid();
-            return response()->json([
-                'success'       => true,
-                'paid'          => true,
-                'status'        => 'approved',
-                'paymentStatus' => 'paid',
-                'reference'     => $submission->payment_reference,
-                'message'       => 'Paystack Test Sandbox: Payment Verified!',
-            ]);
-        }
+        // Charge failed
+        $chargeTx->update(['status' => 'failed']);
 
         return response()->json([
             'success' => false,
@@ -336,11 +390,8 @@ class AdPaymentController extends Controller
         $reference = $request->input('reference');
         $otp = $request->input('otp');
 
-        $submissionQuery = AdSubmission::where('payment_reference', $reference);
-        if (is_numeric($reference)) {
-            $submissionQuery->orWhere('id', (int) $reference);
-        }
-        $submission = $submissionQuery->first();
+        $transaction = AdTransaction::where('reference', $reference)->first();
+        $submission = $transaction ? $transaction->submission : $this->findSubmissionByReference($reference);
 
         if (!$submission) {
             return response()->json(['success' => false, 'error' => 'Submission not found.'], 404);
@@ -350,9 +401,19 @@ class AdPaymentController extends Controller
             return response()->json($this->paymentState($submission));
         }
 
-        // Test card OTP bypass (e.g. '123456')
-        if ($otp === '123456' || $otp === '1234') {
-            $submission->markAsPaid();
+        // Test card OTP bypass is STRICTLY allowed ONLY in local development with mock keys
+        $secretKey = (string) config('services.paystack.secret_key', '');
+        $isMockKey = empty($secretKey) || str_starts_with($secretKey, 'sk_test_placeholder') || str_contains($secretKey, 'example');
+        $allowSimulation = app()->isLocal() && $isMockKey;
+
+        if ($allowSimulation && ($otp === '123456' || $otp === '1234')) {
+            DB::transaction(function () use ($transaction, $submission) {
+                if ($transaction) {
+                    $transaction->markAsPaid();
+                }
+                $submission->markAsPaid($transaction);
+            });
+
             return response()->json($this->paymentState($submission->fresh()));
         }
 
@@ -360,7 +421,13 @@ class AdPaymentController extends Controller
         $status = $result['data']['status'] ?? '';
 
         if (($result['status'] ?? false) && $status === 'success') {
-            $submission->markAsPaid();
+            DB::transaction(function () use ($transaction, $submission) {
+                if ($transaction) {
+                    $transaction->markAsPaid();
+                }
+                $submission->markAsPaid($transaction);
+            });
+
             return response()->json($this->paymentState($submission->fresh()));
         }
 
@@ -369,6 +436,20 @@ class AdPaymentController extends Controller
             'paid'    => false,
             'error'   => $result['message'] ?? 'OTP verification failed.',
         ], 400);
+    }
+
+    /**
+     * Find a submission securely by exact transaction or payment reference.
+     * Numeric IDs and regex extractions are intentionally omitted to prevent IDOR vulnerabilities.
+     */
+    private function findSubmissionByReference(string $reference): ?AdSubmission
+    {
+        $tx = AdTransaction::where('reference', $reference)->first();
+        if ($tx && $tx->submission) {
+            return $tx->submission;
+        }
+
+        return AdSubmission::where('payment_reference', $reference)->first();
     }
 
     /**

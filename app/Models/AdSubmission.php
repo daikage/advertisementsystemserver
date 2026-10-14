@@ -117,6 +117,15 @@ class AdSubmission extends Model
     }
 
     /**
+    /**
+     * Relationship to payment transactions.
+     */
+    public function transactions()
+    {
+        return $this->hasMany(AdTransaction::class, 'ad_submission_id');
+    }
+
+    /**
      * Whether this ad has been paid for.
      */
     public function isPaid(): bool
@@ -125,30 +134,67 @@ class AdSubmission extends Model
     }
 
     /**
-     * Mark this ad as paid and schedule its validity window based on the
-     * purchased duration. Idempotent — safe to call from both the webhook and
-     * the client verification endpoint.
+     * Mark this ad as paid.
+     *
+     * IMPORTANT: The campaign validity clock (starts_at & expires_at) is NOT started
+     * while the ad is pending moderator review. The full purchased duration will be
+     * applied when the moderator approves the ad (or on the scheduled start date).
      */
-    public function markAsPaid(): void
+    public function markAsPaid(?AdTransaction $transaction = null): void
     {
-        if ($this->isPaid()) {
-            return;
-        }
+        \Illuminate\Support\Facades\DB::transaction(function () use ($transaction) {
+            $updates = [
+                'payment_status' => 'paid',
+                'paid_at'        => $this->paid_at ?? now(),
+            ];
 
-        $startsAt = $this->starts_at ?? now();
-        $expiresAt = $this->expires_at;
+            if ($transaction) {
+                if (!empty($transaction->reference)) {
+                    $updates['payment_reference'] = $transaction->reference;
+                }
+                if ($transaction->amount > 0) {
+                    $updates['payment_amount'] = $transaction->amount;
+                }
+                if ($transaction->duration_days > 0) {
+                    $updates['duration_days'] = $transaction->duration_days;
+                }
+            }
 
-        // Derive expiry from the purchased duration if not already scheduled.
-        if ($expiresAt === null && (int) $this->duration_days > 0) {
+            // If the ad is already approved (e.g. renewal flow), extend the validity window.
+            if ($this->status === 'approved') {
+                $days = $transaction ? (int) $transaction->duration_days : (int) $this->duration_days;
+                if ($days > 0) {
+                    $base = ($this->expires_at && $this->expires_at->isFuture()) ? $this->expires_at : now();
+                    $updates['expires_at'] = (clone $base)->addDays($days);
+                }
+            }
+
+            $this->forceFill($updates)->save();
+        });
+    }
+
+    /**
+     * Applies campaign validity dates upon moderator approval so the advertiser
+     * gets their full purchased duration starting from the approval timestamp.
+     */
+    public function scheduleCampaignOnApproval(?\Carbon\Carbon $customStartsAt = null, $durationOverride = null): void
+    {
+        $startsAt = $customStartsAt ?? ($this->starts_at ?? now());
+        $expiresAt = null;
+
+        if ($durationOverride === 'unlimited') {
+            $expiresAt = null;
+        } elseif (is_numeric($durationOverride) && (int) $durationOverride > 0) {
+            $expiresAt = (clone $startsAt)->addDays((int) $durationOverride);
+        } elseif ((int) $this->duration_days > 0) {
+            // Default to purchased duration tier
             $expiresAt = (clone $startsAt)->addDays((int) $this->duration_days);
         }
 
-        $this->forceFill([
-            'payment_status' => 'paid',
-            'paid_at' => now(),
-            'starts_at' => $startsAt,
+        $this->update([
+            'starts_at'  => $startsAt,
             'expires_at' => $expiresAt,
-        ])->save();
+        ]);
     }
 
     /**
